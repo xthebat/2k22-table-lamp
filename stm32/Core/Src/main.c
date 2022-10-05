@@ -40,6 +40,9 @@
 #define MAX_COLOR   255
 #define MIN_COLOR   10
 
+#define MAX_BRIGHTNESS 45
+#define MIN_BRIGHTNESS 5
+
 #define USE_BRIGHTNESS 1
 /* USER CODE END PM */
 
@@ -52,6 +55,7 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 uint8_t LED_Data[MAX_LED][4];
 uint8_t LED_Mod[MAX_LED][4];
+uint8_t LED_Is_Brightness[MAX_LED];
 
 uint8_t LED_PWM_Data[MAX_LED * 24 + 40];
 uint8_t LED_sending;
@@ -85,14 +89,8 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {
 	LED_sending = 0;
 }
 
-//void LED_set(uint32_t LED_number, uint8_t red, uint8_t green, uint8_t blue) {
-//	LED_Data[LED_number][0] = LED_number;
-//	LED_Data[LED_number][1] = green;
-//	LED_Data[LED_number][2] = red;
-//	LED_Data[LED_number][3] = blue;
-//}
-
 void LED_set(uint32_t LED_number, Color *color) {
+	LED_Is_Brightness[LED_number] = 0;
 	LED_Data[LED_number][0] = LED_number;
 	LED_Data[LED_number][1] = color->green;
 	LED_Data[LED_number][2] = color->red;
@@ -108,6 +106,7 @@ void LED_set_brightness(uint32_t LED_number, uint8_t brightness) {
 		return;
 	}
 
+	LED_Is_Brightness[LED_number] = 1;
 	LED_Mod[LED_number][0] = LED_Data[LED_number][0];
 	for (int j = 1; j < 4; j++) {
 		float angle = 90 - brightness;
@@ -126,13 +125,15 @@ void LED_send(void) {
 	uint32_t idx = 0;
 
 	for (int i = 0; i < MAX_LED; ++i) {
-//#if USE_BRIGHTNESS
-		uint32_t color = ((LED_Mod[i][1] << 16) | (LED_Mod[i][2] << 8)
-				| (LED_Mod[i][3]));
-//#else
-//		uint32_t color = ((LED_Data[i][1] << 16) | (LED_Data[i][2] << 8)
-//						| (LED_Data[i][3]));
-//#endif
+		uint32_t color;
+		if (LED_Is_Brightness[i]) {
+			color = ((LED_Mod[i][1] << 16) | (LED_Mod[i][2] << 8)
+					| (LED_Mod[i][3]));
+		} else {
+			color = ((LED_Data[i][1] << 16) | (LED_Data[i][2] << 8)
+					| (LED_Data[i][3]));
+		}
+
 		for (int j = 23; j >= 0; --j) {
 			if (color & (1 << j)) {
 				LED_PWM_Data[idx] = 0.66 * TIM3->ARR;
@@ -155,18 +156,31 @@ void static_mode(Color *color) {
 	for (uint32_t i = 0; i < MAX_LED; ++i) {
 		LED_set(i, color);
 	}
+	LED_send();
 }
 
 /*
  * Dragon breath mode
  */
-uint8_t pos = 0, incr = 1;
-
 void dragon_breath_mode(Color *color) {
-	HAL_Delay(50);
-
 	for (uint32_t i = 0; i < MAX_LED; ++i) {
 		LED_set(i, color);
+	}
+
+	for (int8_t i = MIN_BRIGHTNESS; i <= MAX_BRIGHTNESS; ++i) {
+		for (uint32_t j = 0; j < MAX_LED; ++j) {
+			LED_set_brightness(j, i);
+		}
+		LED_send();
+		HAL_Delay(20);
+	}
+
+	for (int8_t i = MAX_BRIGHTNESS; i >= MIN_BRIGHTNESS; --i) {
+		for (uint32_t j = 0; j < MAX_LED; ++j) {
+			LED_set_brightness(j, i);
+		}
+		LED_send();
+		HAL_Delay(20);
 	}
 }
 
@@ -177,24 +191,13 @@ void rainbow_mode() {
 
 }
 
-void set_mode(uint8_t mode, Color *color) {
+void set_mode_cycle(uint8_t mode, Color *color) {
 	switch (mode) {
 	case STATIC:
 		static_mode(color);
 		break;
 	case DRAGON_BREATH:
 		dragon_breath_mode(color);
-
-		if (color->red == MAX_COLOR || color->blue == MAX_COLOR) {
-			incr = -1;
-		}
-		if (color->red == MIN_COLOR || color->blue == MIN_COLOR) {
-			incr = 1;
-		}
-		color->blue += incr;
-		color->red += incr;
-//		pos += incr;
-
 		break;
 	case RAINBOW:
 		rainbow_mode();
@@ -236,8 +239,12 @@ int main(void) {
 	MX_TIM3_Init();
 	/* USER CODE BEGIN 2 */
 
-	Color c = { 255, 10, 255 };
+	Color c = { 255, 0, 255 };
 	Color *c_p = &c;
+
+	for (uint32_t i = 0; i < MAX_LED; ++i) {
+		LED_Is_Brightness[i] = 0;
+	}
 
 	/* USER CODE END 2 */
 
@@ -261,21 +268,23 @@ int main(void) {
 //		LED_set(14, 255, 165, 0);
 //		LED_set(15, 210, 105, 30);
 
-		set_mode(STATIC, c_p);
-		for (int i = 0; i < 46; i++) {
-			LED_set_brightness(0, i);
-			LED_send();
-//			WS2812_Send();
-//			HAL_Delay(50);
-		}
+		set_mode_cycle(DRAGON_BREATH, c_p);
+//		set_mode_cycle(STATIC, c_p);
 
-		for (int i = 45; i >= 0; i--) {
-			LED_set_brightness(0, i);
-			LED_send();
+//		for (int i = 0; i < 46; i++) {
+//			LED_set_brightness(0, i);
+//			LED_send();
 //			WS2812_Send();
-//			HAL_Delay(50);
-		}
-		LED_send();
+//			HAL_Delay(10);
+//		}
+//
+//		for (int i = 45; i >= 0; i--) {
+//			LED_set_brightness(0, i);
+//			LED_send();
+//			WS2812_Send();
+//			HAL_Delay(10);
+//		}
+//		LED_send();
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
